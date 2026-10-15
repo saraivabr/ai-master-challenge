@@ -1,96 +1,92 @@
-# Process log: como usei IA neste desafio
+# Process Log: como usei IA neste desafio
 
-**Como ler este registro:** as sessões 1 e 2 preservam a narrativa já existente sobre o trabalho no Warp e no Claude. São o relato das versões anteriores, não evidência de que essas sessões foram reexecutadas ou de que suas conclusões continuam válidas. A sessão 3 registra a revisão com Codex. A implementação e a apresentação atuais correspondem à v4.
+Usei três agentes de IA em sequência: Warp, Claude e Codex. Cada um revisou o trabalho do anterior. As decisões entre uma versão e outra foram minhas, e este log registra também os erros de cada um.
 
-## Decomposição inicial do problema
+## Como decompus o problema
+Usei a estrutura do Doug, o meu método de mentoria: **Verdade → Corte → Comando**.
+- **Verdade:** o que os dados sustentam, não o que o brief sugere. Toda feature passa por um backtest temporal antes de entrar.
+- **Corte:** o pedido literal é "um score". O problema real é o vendedor gastar agenda em deal que não fecha.
+- **Comando:** cada deal sai com uma ação e um prazo.
 
-O relato original descreve o uso da estrutura do Doug, meu método de mentoria: **Verdade → Corte → Comando**.
+Ao longo das versões aprendi um limite do método: **o comando tem que ser proporcional à evidência.** Esse aprendizado veio da revisão do Codex (v4).
 
-- **Verdade:** investigar o que os dados sustentam antes de escolher features.
-- **Corte:** transformar o pedido de um score em uma decisão de agenda para o vendedor.
-- **Comando:** acompanhar cada oportunidade com uma ação compreensível.
+---
 
-Na formulação inicial, isso também incluía mostrar um custo em dinheiro e impor prazo e consequência a cada ação. A v4 revê essa parte: preço de catálogo e idade, sozinhos, não demonstram receita futura nem autorizam prazo de compra ou encerramento automático.
+## Sessão 1 — Warp (agente Oz): v1 e v2
+1. Li o brief, o guia e o template antes do código.
+2. O Kaggle exige login, então usei um espelho no GitHub com os 4 CSVs (8.800 deals) e conferi as contagens com o brief. A URL do espelho não foi guardada.
+3. A EDA mostrou:
+   - Grafias divergentes: `GTXPro` / `GTX Pro` e `technolgy` / `technology`.
+   - 5 vendedores sem deals.
+   - Contas vazias em deals abertos.
+   - O dado que depois decidiu tudo: muitos deals abertos acima do maior ciclo de fechamento.
+4. **v1:** modelo log-odds com vendedor, produto, setor, conta e idade. As explicações eram ótimas ("Vendedor neste produto: +7 pp").
+5. Pedi um backtest temporal: AUC 0,51. A v1 explicava ruído com confiança.
+6. **v2:** removi os fatores sem sinal e o score virou valor esperado, com triagem dos deals antigos.
 
-## Sessão 1 — Warp, agente Oz: v1 e v2
-
-Esta seção resume o relato original de Fellipe.
-
-1. Li o brief, o guia de submissão e o template antes de começar o código.
-2. O relato registra que, diante da exigência de login no Kaggle, usei um espelho no GitHub com os quatro CSVs e 8.800 oportunidades. **A URL desse espelho não foi preservada.** A fonte indicada pelo desafio é [CRM Sales Predictive Analytics](https://www.kaggle.com/datasets/agungpambudi/crm-sales-predictive-analytics); a revisão atual trabalha com os CSVs presentes na pasta e não comprova o download original.
-3. A exploração apontou diferenças de grafia (`GTXPro`/`GTX Pro` e `technolgy`/`technology`), cinco vendedores sem oportunidades e contas vazias em Engaging e Prospecting. Também identificou 1.301 negócios abertos com idade **maior ou igual a 138 dias**. A redação anterior dizia “tinham passado”; a distinção importa, porque dez deles têm exatamente 138 dias.
-4. **v1:** modelo log-odds com shrinkage para vendedor, produto, setor, conta, vendedor × produto e idade. Gerou explicações como “Vendedor neste produto: +7 pp”.
-5. Pedi um backtest temporal. O relato registra AUC de aproximadamente 0,51, insuficiente para sustentar a confiança das explicações.
-6. Testei carga do vendedor e histórico prévio da conta. Os resultados relatados também ficaram próximos de 0,5.
-7. **v2:** retirei os fatores sem evidência suficiente no teste. O score passou a usar valor esperado, com triagem de oportunidades antigas e uma visão para a gestão.
-
-**Erros e correções registrados nessa sessão:**
-
-- A primeira solução produziu explicações convincentes antes de demonstrar discriminação fora da amostra. O backtest motivou a simplificação.
-- Os negócios do teste ainda carregavam estágio Won/Lost, gerando AUC exatamente 0,500. O relato registra a correção desse problema.
-- Um teste retirava a idade (`engage_date=NaT`), mudando a pergunta que estava sendo avaliada. Foi substituído por uma tentativa de reconstruir o pipeline nas datas de corte.
+**Erros da IA:**
+- **Overfitting com cara de insight** na v1.
+- **AUC exatamente 0,500** porque os deals de teste ainda carregavam Won/Lost. Desconfiei do número redondo demais.
+- **Um teste que removia a idade**, e por isso media outra coisa.
 
 ## Sessão 2 — Claude: v3
+1. **Auditoria da v2:** o score tinha correlação de ordem de 0,98 com o preço, ou seja, era a tabela de preço. E a curva de chance *subia* com a idade porque olhava só deals fechados (viés de sobrevivência).
+2. **Hipótese:** contar os deals parados acima de 138 dias como perda. Com isso, a conversão vai a 53%, a chance cai com a idade e cada deal ganha um prazo.
+3. **Vazamento encontrado:** setor aparecia com AUC 0,71. Era o campo de conta vazio: todo deal fechado tem conta.
+4. **Interface por papel**, com o plano de segunda em cartões, contagem regressiva e detalhe por clique.
 
-Esta seção preserva o relato original e marca as conclusões posteriormente revistas.
-
-Pedi ao Claude uma auditoria da v2 e a aplicação do método Doug aos pontos fracos. O relato registra acesso aos arquivos desse método.
-
-1. **Auditoria da v2:** o Claude executou `scoring.py`, abriu o app em navegador headless e comparou números com o README. Apontou correlação de ordem de 0,98 entre score e preço, ações dependentes do produto e um desempate por preço em vez de valor esperado. Reproduzir os números demonstrava consistência da implementação, mas não validava a premissa estatística.
-2. **Investigação das coortes:** a equipe observou taxas diferentes entre coortes e recalculou o denominador incluindo oportunidades antigas como perdas. Daí vieram os números apresentados na v3 como “conversão real de 53%” e uma curva que diminuía com a idade. **Correção da v4:** esses resultados dependiam de rotular negócios ainda abertos como perdas. Eram resultados de uma hipótese, não observações do desfecho. A v4 remove essa classificação e essas probabilidades.
-3. **Backtest da v3:** passou a usar o resultado conhecido em 31/12, ainda com perdas presumidas para os antigos. A documentação o chamou de corrigido. **Correção da v4:** além do problema de rótulo, os fechamentos no próprio dia do corte pertenciam ao treino e ao teste, porque os dois filtros usavam fronteiras diferentes.
-4. **Campo de conta:** o relato descreve uma AUC de 0,71 para setor, seguida da identificação de que o campo vazio influenciava o resultado. Restringir a análise a contas preenchidas reduziu a métrica. O relato registra que nenhum negócio ganho estava sem conta. Isso pode refletir o preenchimento exigido no fechamento; sem snapshots do cadastro, não prova capacidade preditiva disponível antes da venda.
-5. **Outros sinais:** o relato registra testes de porte da conta, recorrência e calendário sem evidência suficiente de discriminação. A conclusão atual é limitada a esses testes; não significa que esses atributos nunca possam ser úteis.
-6. **Interface da v3:** passou a mostrar uma comparação entre receita calculada com a taxa dos encerrados e uma estimativa de US$ 746 mil; criou “Última chamada”, prazo no dia 138, Plano de segunda e visão da gestão. **Correção da v4:** os rótulos “previsão honesta” e “ponto sem volta” excediam a evidência. O app atual mantém o plano de ação, elimina o forecast e usa a idade como critério de acompanhamento ou revisão.
-7. **Verificação relatada:** execução de `scoring.py`, testes com `streamlit.testing`, filtros por vendedor e screenshots no navegador. Esses testes pertenciam à v3. As asserções sobre probabilidades e perdas validavam a lógica programada, não a sua adequação ao problema.
-
-**Aprendizados registrados nessa sessão:**
-
-- Uma curva calculada apenas com negócios encerrados pode responder a uma pergunta diferente da chance de um negócio ainda aberto. Incluir perdas presumidas também não resolve essa limitação por si só.
-- Um campo vazio pode carregar informação do processo de fechamento, em vez de um sinal disponível no momento da decisão.
-- Houve correções de apresentação: o caractere `$` foi interpretado como LaTeX no Streamlit, o cache ocultou uma alteração e um exemplo numérico do README precisou ser recalculado.
+**Erros da IA (que só apareceram na revisão seguinte):**
+- **A hipótese "parado = perda" foi apresentada como fato** ("conversão real", "previsão honesta de $746k").
+- **A previsão de $746k era 76% prospecção**, com uma taxa de conversão que a base não permite validar.
+- **No backtest, um deal fechado no próprio dia do corte caía no treino e no teste.**
+- **Os deals com exatamente 138 dias eram tratados como parados**, mas existe uma venda fechada exatamente no dia 138.
 
 ## Sessão 3 — Codex: v4
+Pedi ao Codex que revisasse e corrigisse a v3, com foco em linguagem proporcional à evidência.
+- **Corrigiu a fronteira:** parado é *mais* de 138 dias, não 138 ou mais.
+- **Corrigiu o backtest:** treino com fechados até o corte, teste com os abertos ao fim do dia, sem IDs em comum. Os que seguem abertos ficam fora da AUC e são contados à parte.
+- **Removeu probabilidades e previsões**, e passou o score para uma regra fixa: 60% valor e 40% idade.
+- **Escreveu 20 testes automatizados.**
 
-A revisão partiu dos arquivos presentes na pasta. Fellipe pediu a correção do código e da apresentação com SARAIVA · PNL e SARAIVA · Conversão BR, seguida de nova validação para preparar a submissão. Também confirmou o perfil [linkedin.com/in/saraivaai](https://www.linkedin.com/in/saraivaai/).
+## Sessão 4 — Claude: v5 (a versão entregue)
+Pedi ao Claude para validar o que estava de pé. Ele rodou a v4 do zero: 20/20 testes com as versões fixadas, app sem erros e números batendo com o README. Mas apontou três problemas de produto:
+1. **O plano de segunda mandava começar pelo pior deal.** O item nº 1 da Vicki era um MG Special de **$55 parado há 379 dias**, porque a fila de revisão estava ordenada por idade.
+2. **O score premiava idade.** Com 40% de peso, quanto mais velho, mais prioridade, inclusive na beira dos 138 dias, onde nenhuma venda fechou depois. E o backtest da própria v4 mostrava o score sem vantagem sobre o preço.
+3. **A interface voltou a ser texto e tabela**, e o diagnóstico mais forte da base tinha sumido.
 
-**O que a análise encontrou:**
+**Decisão:** juntar o melhor das duas versões.
+- **Fica da v4:** a fronteira em mais de 138 dias, o backtest sem sobreposição e com os desconhecidos separados, a validação de entradas e a disciplina de testes.
+- **Volta da v3:** a interface por papel, o plano por valor esperado com prazo e a curva por idade. Mas agora a curva é **declarada como hipótese**, com a evidência ao lado (0 de 6.711 fechadas passaram de 138 dias).
+- **O topo da tela passou a ser um fato observado**, não uma previsão: "64% do valor aberto está em deals mais velhos que qualquer venda já fechada".
+- **A "previsão honesta" saiu.** Era dominada pela prospecção.
+- **Deal parado nunca entra no plano de 5.** Vira uma tarefa de limpeza à parte.
 
-- Os 1.301 negócios antigos incluíam dez exatamente no dia 138, e existe um ganho registrado com ciclo de 138 dias. O limite anterior excluía esse caso de fronteira.
-- A taxa apresentada como “real” vinha de atribuir perda a oportunidades que continuavam abertas.
-- A estimativa financeira era dominada pela prospecção, usando uma taxa de progressão que a base não permite validar.
-- O treino incluía fechamentos até a data do corte; o teste excluía somente os anteriores ao corte. Havia sobreposição de IDs.
-- Texto e interface transformavam limite histórico em prazo comercial e hipótese em resultado confirmado.
+**Verificação:**
+- **23 testes** (20 de scoring e 3 de interface), rodando tanto com as versões fixadas (pandas 2.3.3, Streamlit 1.50) quanto com as mais novas (pandas 3, Streamlit 1.66).
+- **Os testes de interface** abrem o app como cada um dos 27 vendedores com deals abertos, testam a visão do gerente com os filtros em cascata e um filtro vazio que se recupera.
+- **Screenshots com Playwright**, sem erros no console.
 
-**Decisões da revisão:**
+**Auditoria independente:** um segundo agente, que não escreveu a v5, conferiu cada número dos READMEs contra o código e os dados. Todos bateram, exceto um: eram 27 vendedores com deals abertos, não 30. Ele também apontou exageros, todos corrigidos:
+- **"AUC ≈ 0,5" virou "nada separa de forma estável".** A idade oscila entre 0,43 e 0,55 e muda de direção.
+- **O gráfico agora diz que a queda vem da hipótese.**
+- **"Metade das perdas até o dia 14" vale só para as perdas registradas** e saiu do argumento central.
+- **Um deal em "Baixa prioridade" recebia "conversa em 48h".** Corrigido.
+- **A Última chamada do plano precisa ter pelo menos 1 dia de prazo.**
+- **Entrou um aviso de que o limite de 138 dias pode ser artefato de base sintética.**
 
-1. **Prioridade como heurística explícita.** Combinar valor de catálogo normalizado (60%) e idade relativa (40%) para ordenar as negociações. Esses pesos são uma escolha de produto, não uma probabilidade individual estimada.
-2. **Revisão sem perda presumida.** Mais de 138 dias direciona a oportunidade para confirmação de situação. Exatamente 138 dias permanece dentro da referência histórica. O CRM deve ser atualizado com base na resposta do cliente ou em outra evidência de desfecho.
-3. **Uma agenda executável.** O Plano de segunda distribui até cinco posições entre revisão e negociação, completando vagas com prospecção e depois com os itens restantes das filas quando necessário. O próximo passo informa o que confirmar, sem criar urgência de compra.
-4. **Fronteira temporal consistente.** Histórico com fechamento até o corte; teste com fechamento posterior ao corte e resultado conhecido até a referência. Os casos ainda abertos são reportados como desconhecidos. A avaliação compara score e preço e informa quantos casos têm resultado conhecido ou permanecem abertos.
-5. **Linguagem proporcional à evidência.** A revisão com PNL separa observação e interpretação; Conversão BR liga o benefício ao mecanismo entregue e à prova disponível. A promessa é organizar o trabalho do vendedor. Ganho de vendas depende de validação em uso real.
-6. **Documentação de envio.** Preencher o LinkedIn confirmado, atualizar setup e evidências e remover data de envio e itens de chat export que não correspondiam a arquivos presentes. A narrativa escrita é um formato aceito pelo guia.
+**Erros nessa sessão:**
+- **O teste de interface do Streamlit 1.50 quebra com `segmented_control`** (bug do próprio framework de teste). Troquei por `radio`.
+- **Um teste de filtro vazio era pulado em silêncio** porque o cenário não existia por escritório. Reescrevi usando um manager sem o produto, e agora ele roda.
+- **Uma explicação de texto quebrava** quando não havia histórico (data vazia). Coberto por teste.
 
-**Validação da v4 em 14/10/2026:** passaram 20 testes automatizados — 16 de scoring e quatro de interface com AppTest — e as verificações Ruff e Black. No navegador desktop de 1440 × 1100, o app carregou sem erros de JavaScript. O layout também foi conferido em 390 × 844, sem rolagem horizontal da página. Ao selecionar Vicki, a interface mostrou 24 negociações, 80 revisões e nenhuma prospecção; o download real da fila produziu um CSV com 24 linhas somente dessa vendedora, incluindo prioridade, observação, critério e próximo passo. A [saída dos testes e do backtest](validacao.txt) foi preservada.
+---
 
-A validação reproduzível da v4 está nos comandos do [README principal](../README.md). O backtest responde sobre ordenação na parcela com desfecho conhecido; testes de código e interface respondem sobre funcionamento. Nenhum desses resultados, sozinho, demonstra aumento de conversão comercial.
+## O que eu adicionei que as IAs sozinhas não fariam
+- **Desconfiei duas vezes de resultados bonitos:** a v1 com explicações perfeitas e a AUC 0,71 de setor. Nos dois casos era ruído ou vazamento.
+- **Coloquei as IAs para revisar umas às outras** e decidi o que cada revisão acertou. O Codex estava certo sobre rigor. O Claude estava certo sobre o plano de segunda e a interface.
+- **Mantive o foco no vendedor na segunda de manhã.** A pergunta não é "qual modelo é mais correto", e sim "o que ele faz primeiro". Um deal de $55 parado há um ano não pode ser a resposta.
 
-## Julgamento humano e iterações
-
-O relato original destaca que Fellipe pediu testes quando as explicações pareciam mais fortes que a evidência e trouxe a decisão de agenda para o centro do produto. Nesta revisão, o pedido explícito foi corrigir os problemas encontrados e preparar a pasta para envio, preservando esse foco prático.
-
-| Versão | Decisão principal | Limitação que motivou a próxima revisão |
-|---|---|---|
-| v1 | Modelo com múltiplos atributos e explicações por fator | Backtest relatado próximo do acaso |
-| v2 | Simplificação para valor esperado | Forte dependência de preço e interpretação inadequada da curva |
-| v3 | Antigos tratados como perdas, previsão e prazo por oportunidade | Desfechos presumidos, certeza excessiva e fronteira temporal sobreposta |
-| v4 | Prioridade heurística, revisão de situação e avaliação com desconhecidos separados | Utilidade comercial ainda depende de validação no fluxo real do time |
-
-## Evidências disponíveis
-
-- [Código, testes e CSVs](../solution/).
-- [Screenshots do app](../docs/).
-- [Saída da validação automatizada](validacao.txt).
-- Esta narrativa e o [README da submissão](../README.md).
-
-Os exports de chat mencionados na versão anterior não estão anexados. A evidência de processo entregue aqui é a narrativa, com as conclusões anteriores e suas correções identificadas.
+## Evidências
+- Código, testes e dados: [`../solution/`](../solution/)
+- Saída dos testes e do backtest: [`validacao.txt`](validacao.txt)
+- Screenshots: [`../docs/`](../docs/)

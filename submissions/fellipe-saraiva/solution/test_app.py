@@ -1,96 +1,62 @@
-"""Testes da interface com dados reais; execute via unittest discover."""
+"""Testes da interface com dados reais (streamlit.testing).
+
+Execute: python -m unittest discover -s . -p 'test_*.py'
+"""
 from pathlib import Path
 import unittest
 
 from streamlit.testing.v1 import AppTest
+
 import scoring as sc
 
-APP = Path(__file__).with_name("app.py")
+APP = str(Path(__file__).with_name("app.py"))
 
 
 class AppTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        source = sc.load()
-        cls.opened = sc.score(source[source.deal_stage.isin(sc.OPEN)], sc.fit(source))
+        df = sc.load()
+        cls.o = sc.score(df[df.deal_stage.isin(sc.OPEN)], sc.fit(df))
 
-    def app(self):
-        app = AppTest.from_file(str(APP), default_timeout=30).run()
-        self.assertEqual(len(app.exception), 0)
-        return app
+    def run_app(self):
+        at = AppTest.from_file(APP, default_timeout=60).run()
+        self.assertEqual(len(at.exception), 0)
+        return at
 
-    def test_initial_totals_and_disclosed_limit(self):
-        app = self.app()
-        self.assertEqual(
-            [metric.value for metric in app.metric[:3]], ["298", "1291", "500"]
-        )
-        self.assertTrue(
-            any(
-                "Não representa chance de compra" in caption.value
-                for caption in app.caption
-            )
-        )
-        self.assertEqual(len(app.tabs), 5)
+    def test_every_seller_renders_plan_without_errors(self):
+        at = self.run_app()
+        for agent in sorted(self.o.sales_agent.unique()):
+            at.selectbox[0].select(agent).run()
+            self.assertEqual(len(at.exception), 0, agent)
+            g = self.o[self.o.sales_agent.eq(agent)]
+            cards = [md for md in at.markdown if any(md.value.startswith(f"**{i}.") for i in range(1, 6))]
+            self.assertEqual(len(cards), min(5, g.acao.isin(sc.ALIVE + [sc.ACT_PROSPECT]).sum()), agent)
+            self.assertEqual(at.metric[2].value, str(g.acao.eq(sc.ACT_STALE).sum()), agent)
 
-    def test_seller_filters_rows_and_plan_without_changing_scores(self):
-        app = self.app()
-        app.selectbox[2].select("Vicki Laflamme").run()
-        self.assertEqual(len(app.exception), 0)
-        selected = self.opened[self.opened.sales_agent.eq("Vicki Laflamme")]
-        counts = [
-            str(selected.acao.eq(action).sum())
-            for action in [sc.ACT_NEGOTIATE, sc.ACT_REVIEW, sc.ACT_PROSPECT]
-        ]
-        self.assertEqual([metric.value for metric in app.metric[:3]], counts)
-        for table in app.dataframe:
-            if "Vendedor" in table.value:
-                self.assertEqual(set(table.value["Vendedor"]), {"Vicki Laflamme"})
-        headers = [
-            item.value
-            for item in app.markdown
-            if any(item.value.startswith(f"**{i}.") for i in range(1, 6))
-        ]
-        self.assertEqual(len(headers), min(5, len(selected)))
-        table = next(
-            table.value
-            for table in app.dataframe
-            if "Prioridade (0–100)" in table.value
-        )
-        expected = selected.set_index("opportunity_id").score
-        for _, row in table.iterrows():
-            self.assertEqual(row["Prioridade (0–100)"], expected[row["ID"]])
+    def test_manager_view_totals_and_filters_cascade(self):
+        at = self.run_app()
+        at.radio[0].set_value("Gerente").run()
+        self.assertEqual(len(at.exception), 0)
+        self.assertEqual(at.metric[0].value, "1,291")
+        region = at.selectbox[0].options[1]
+        at.selectbox[0].select(region).run()
+        expected = self.o[self.o.regional_office.eq(region)]
+        self.assertEqual(set(at.selectbox[1].options[1:]), set(expected.manager))
+        self.assertEqual(at.metric[0].value, f"{expected.acao.eq(sc.ACT_STALE).sum():,}")
 
-    def test_empty_filter_is_explained_and_recovers(self):
-        products = set(self.opened["product"])
-        seller, absent = next(
-            (seller, sorted(products - set(group["product"]))[0])
-            for seller, group in self.opened.groupby("sales_agent")
-            if products - set(group["product"])
-        )
-        app = self.app()
-        app.selectbox[2].select(seller).run()
-        app.multiselect[0].set_value([absent]).run()
-        self.assertEqual(len(app.exception), 0)
-        self.assertTrue(
-            any("Nenhuma oportunidade aberta" in message.value for message in app.info)
-        )
-        self.assertEqual(len(app.metric), 0)
-        app.multiselect[0].set_value([]).run()
-        self.assertEqual(len(app.exception), 0)
-        self.assertEqual(len(app.metric), 4)
-
-    def test_region_and_manager_filters_cascade(self):
-        app = self.app()
-        region = app.selectbox[0].options[1]
-        app.selectbox[0].select(region).run()
-        expected = self.opened[self.opened.regional_office.eq(region)]
-        self.assertEqual(set(app.selectbox[1].options[1:]), set(expected.manager))
-        manager = app.selectbox[1].options[1]
-        app.selectbox[1].select(manager).run()
-        expected = expected[expected.manager.eq(manager)]
-        self.assertEqual(set(app.selectbox[2].options[1:]), set(expected.sales_agent))
-        self.assertEqual(len(app.exception), 0)
-
+    def test_empty_product_filter_is_explained_and_recovers(self):
+        at = self.run_app()
+        at.radio[0].set_value("Gerente").run()
+        sub = self.o[self.o.manager.eq("Dustin Brinkmann")]
+        missing = sorted(set(self.o["product"]) - set(sub["product"]))
+        self.assertTrue(missing)
+        at.selectbox[1].select("Dustin Brinkmann").run()
+        at.multiselect[0].set_value(missing[:1]).run()
+        self.assertEqual(len(at.exception), 0)
+        self.assertTrue(any("Nenhum deal aberto" in i.value for i in at.info))
+        at.multiselect[0].set_value([]).run()
+        self.assertEqual(len(at.exception), 0)
+        self.assertEqual(at.metric[0].value, f"{sub.acao.eq(sc.ACT_STALE).sum():,}")
 
 if __name__ == "__main__":
     unittest.main()

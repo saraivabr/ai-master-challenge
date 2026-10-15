@@ -6,105 +6,121 @@
 
 ## Executive Summary
 
-**Abra sua carteira e saiba quais oportunidades revisar e quais negociações trabalhar primeiro.** Construí um app Streamlit que transforma o pipeline em um plano de até cinco ações por vendedor, com critérios visíveis. No recorte de 31/12/2017, há 2.089 oportunidades abertas: 1.291 negociações ultrapassam o maior ciclo de fechamento registrado e pedem revisão de situação, 298 permanecem dentro dessa referência e 500 estão em prospecção. A priorização combina valor de catálogo e idade da negociação; o score é uma regra de trabalho, não uma probabilidade de compra. A recomendação é usar o plano para confirmar próximos passos com os clientes e atualizar o CRM com base nas respostas.
+**64% do valor aberto no pipeline ($3,2 milhões de $5,0 milhões) está em deals mais velhos que qualquer venda já fechada.** Nenhuma das 6.711 vendas fechadas levou mais de 138 dias, mas 1.291 negociações abertas já passaram disso. Se forem perdas que ninguém registrou, a taxa de ganho real cai de 63% para 53%.
 
-![Visão do pipeline e prioridades no app](docs/pipeline.png)
+Construí um app Streamlit que o vendedor abre na segunda e recebe **5 comandos em ordem, cada um com prazo**. Os deals parados saem do ranking e viram uma tarefa de limpeza.
+
+Também testei o que prevê ganho. Nem vendedor, nem produto, nem setor, nem conta, nem o próprio score separam ganho de perda de forma estável (AUC ≈ 0,5). A idade oscila e muda de direção entre cortes. Por isso o app não promete adivinhar quem compra. Ele organiza a semana: **limpar o que passou do prazo, trabalhar o que vale mais e o que vence antes.**
+
+![Visão do vendedor](docs/pipeline.png)
 
 ## Como rodar
 
-Requer Python 3.11 ou superior. A partir da raiz deste repositório:
+Requer Python 3.11 ou superior.
 
 ```bash
 cd submissions/fellipe-saraiva/solution
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python -m unittest discover -s . -p 'test_*.py'
-python scoring.py
-streamlit run app.py
+python -m unittest discover -s . -p 'test_*.py'        # 23 testes
+python scoring.py                                      # reproduz todos os números deste README
+streamlit run app.py                                   # http://localhost:8501
 ```
 
-Abra [localhost:8501](http://localhost:8501). No Windows, ative o ambiente com `.venv\Scripts\activate` em vez de `source`.
+Os quatro CSVs do [dataset do Kaggle](https://www.kaggle.com/datasets/agungpambudi/crm-sales-predictive-analytics) estão em `solution/data/`. Eles foram baixados de um espelho no GitHub, porque o Kaggle exige login. As contagens batem com o brief, mas a URL do espelho não foi guardada. O app usa uma **data de referência fixa, 31/12/2017** (último dia da base), e não a data de hoje.
 
-Os quatro CSVs estão incluídos em [`solution/data/`](solution/data/). A fonte indicada no desafio é [CRM Sales Predictive Analytics, no Kaggle](https://www.kaggle.com/datasets/agungpambudi/crm-sales-predictive-analytics), descrita no brief como CC0. O relato original registra obtenção por um espelho do GitHub; a URL desse espelho não foi preservada, portanto a cadeia de download não foi verificada nesta revisão. O app usa uma **data de referência fixa: 31/12/2017**, e não a data atual do computador.
+## O que cada pessoa vê
 
-## O que o vendedor recebe
+O app abre perguntando: **Vendedor ou Gerente?**
 
-1. **Uma visão da carteira:** oportunidades em negociação, em prospecção e que precisam de revisão, com o denominador de cada indicador explícito.
-2. **Um plano de até cinco ações:** ao selecionar o vendedor, o app reserva até duas posições para revisão e três para negociação; preenche vagas com prospecções e, se ainda houver espaço, com os itens restantes das duas filas. Cada item informa o fato observado, o motivo da prioridade e um próximo passo sugerido.
-3. **Uma lista explicável:** score, preço de catálogo, idade e orientação de ação. Campos incompletos viram tarefas de cadastro, sem inferir intenção de compra.
-4. **Filtros por vendedor, manager e região:** o vendedor consulta sua carteira; a gestão identifica onde precisa confirmar o estado das oportunidades.
-5. **Critérios e avaliação à vista:** a tela explica a fórmula e mostra o backtest temporal, incluindo os casos cujo desfecho permanece desconhecido.
+**Vendedor** (escolhe o próprio nome):
+1. **"Bom dia, Kary."** Quatro números: deals vivos, Última chamada, parados para limpar e o valor parado.
+2. **Alertas com comando:**
+   - 25% ou mais dos deals abertos parados: o app manda resolver até sexta (requalificar com data do cliente ou marcar Lost).
+   - Abaixo de 25%, o app diz "Pipeline limpo. Agora ataque". Hoje ninguém passa nesse critério: o mais limpo tem 38% parado.
+   - Deal vivo sem conta no CRM: "preencher a conta antes de tudo".
+3. **Seus 5 comandos da semana**, em cartões. Cada cartão traz:
+   - Valor esperado, chance histórica e **prazo final**.
+   - Uma barra de contagem regressiva.
+   - O comando em destaque e o porquê.
 
-O app apoia a decisão. Confirmar interesse, combinar uma data e alterar o estágio no CRM continuam dependendo do contato e da avaliação do vendedor.
+   A Última chamada mais valiosa (que ainda tenha pelo menos 1 dia de prazo) sempre entra no plano. Deal parado nunca entra.
+4. **Tabela enxuta.** Ao **clicar numa linha**, aparece a explicação completa: **Verdade → Por que importa → Próximo passo**.
 
-## Critérios de priorização
+**Gerente** (filtros por escritório, manager e produto):
+1. **Diagnóstico:** o valor parado, ao lado da curva "quanto mais velho o deal, menos ele fecha".
+2. **Pipeline parado por vendedor**, com % e valor. O primeiro da lista tem 88% dos deals abertos parados.
+3. As mesmas filas, com a coluna Vendedor.
 
-**Primeiro, separar o tipo de trabalho.** O maior ciclo entre negócios encerrados até a data de referência é 138 dias. Uma negociação aberta **há mais de 138 dias** entra na fila de revisão de situação. Esse limite descreve o histórico disponível; não é prazo comercial, nem prova de perda. Há um negócio ganho exatamente no dia 138, e os dez abertos com essa idade permanecem na fila de negociação.
+| Gerente | Detalhe do deal (clique na linha) |
+|---|---|
+| ![gerente](docs/gerente.png) | ![detalhe](docs/detalhe-deal.png) |
 
-**Depois, ordenar as negociações por uma regra transparente:**
+## Lógica do score
 
-```text
-score = 100 × (0,60 × valor normalizado + 0,40 × idade relativa)
-idade relativa = mínimo(idade em dias / maior ciclo histórico, 1)
-```
+| Passo | Regra |
+|---|---|
+| Prazo | O maior ciclo entre os fechados é **138 dias**. Engaging com **mais** de 138 dias vira **Requalificar ou encerrar** (sai do ranking). O dia 138 ainda está no prazo: existe uma venda fechada exatamente nele. |
+| Chance histórica | Dos deals da base que chegaram abertos à mesma idade, quantos ganharam: 53% no dia 0, 48% no dia 60, 37% no dia 90, 25% no dia 103, 11% no dia 120. **Hipótese explícita:** os parados contam como perda, e é ela que produz a queda. Entre os desfechos registrados, a idade não separa ganho de perda; sem a hipótese, só existe a taxa dos fechados (63%). |
+| Valor esperado | Chance histórica × preço de catálogo. Deal aberto não tem `close_value`, e o deal ganho fecha na mediana a 100% do preço de tabela. |
+| Score 0–100 | Escala log do valor esperado. Os limites vêm do catálogo inteiro, então filtrar a tela não muda o score. |
+| Ações | **Última chamada** = vivo a partir do dia 103, quando a chance cai abaixo da metade da média. **Atacar agora** = score ≥ 70. **Manter cadência** = score ≥ 45. **Baixa prioridade** = o resto. **Fazer 1º contato** = Prospecting. |
+| Desempate | Dentro do mesmo score, vem antes quem vence antes. |
+| Deal sem conta | Todo deal fechado da base tem conta, e 209 dos 298 vivos estão sem conta. Pode ser regra do CRM no fechamento, então isso não entra na chance: vira o primeiro comando. |
 
-O valor usa escala logarítmica e limites fixos do catálogo de produtos. Isso reduz a dominância dos produtos mais caros e mantém o score estável quando um filtro muda. A idade relativa dá visibilidade às negociações mais antigas dentro do histórico. Os pesos de 60% e 40% são uma escolha de produto, aberta a ajuste; não foram estimados como probabilidades de ganho.
+**A idade muda a ordem, não só o preço.** Um GTX Pro de $4.821 no dia 120 vale $521 esperados e perde para um GTX Plus Basic de $1.096 no dia 20 ($554). Mesmo assim, o preço ainda pesa muito: a correlação de ordem entre score e preço é 0,78 entre os vivos.
 
-**A idade muda a prioridade mesmo com o preço constante:** para o mesmo produto, passar de 20 para 120 dias acrescenta cerca de 29 pontos ao componente total do score, usando a referência de 138 dias. Esse incremento significa maior prioridade de acompanhamento segundo a regra, não maior chance de fechar.
+## O backtest: o que tem sinal e o que não tem
 
-- **Revisão:** confirmar se a oportunidade continua ativa e registrar o próximo passo; encerrar somente quando houver evidência de encerramento.
-- **Negociação:** esclarecer a pendência com o cliente e combinar a próxima ação. A prioridade não cria um prazo de compra.
-- **Prospecção:** fila própria, ordenada por valor de catálogo, com orientação para primeiro contato. A base não permite reconstruir a taxa de passagem de prospecção para engajamento.
-- **Cadastro incompleto:** identificar ou confirmar a conta antes de usar seus dados em uma abordagem.
+Em 4 datas de corte, o modelo aprende só com o que tinha fechado **até o corte** e é avaliado nos deals **abertos ao fim daquele dia**. O rótulo é o desfecho **registrado** até 31/12. Os deals que seguem abertos ficam fora da AUC e são contados à parte; nenhum vira perda presumida. Nenhum ID aparece no treino e no teste ao mesmo tempo.
 
-Preço de catálogo não equivale a receita contratada. A versão atual não calcula forecast financeiro nem atribui probabilidade individual de fechamento.
+| Corte (2017) | Abertos no corte | Com desfecho | Ainda abertos | Score | Idade | Preço | Vendedor | Produto | Setor | Conta |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 01/04 | 1.346 | 990 | 356 | 0,53 | 0,47 | 0,53 | 0,50 | 0,45 | 0,48 | 0,47 |
+| 01/05 | 1.622 | 1.142 | 480 | 0,52 | 0,54 | 0,52 | 0,46 | 0,49 | 0,47 | 0,48 |
+| 01/06 | 1.546 | 939 | 607 | 0,49 | 0,43 | 0,50 | 0,48 | 0,51 | 0,49 | 0,49 |
+| 01/07 | 1.706 | 983 | 723 | 0,50 | 0,55 | 0,50 | 0,50 | 0,53 | 0,51 | 0,47 |
 
-## Avaliação temporal e limites de interpretação
+**Tudo fica perto de 0,5.** Nenhum atributo desta base separa de forma estável, entre os deals que fecharam, quem ganha de quem perde. A idade chega a 0,43 em um corte e 0,55 em outro: o sinal muda de direção, então não é confiável. Colocar "vendedor: +7 pp" na tela daria uma explicação convincente e falsa.
 
-O backtest usa quatro datas de corte. Para cada uma, o histórico de referência contém apenas negócios encerrados **até a data de corte**. O conjunto elegível contém oportunidades engajadas **até o corte** e ainda abertas ao fim daquele dia. A AUC usa somente as que encerraram **depois do corte**, com resultado conhecido até 31/12/2017. Os IDs de treino e teste não se sobrepõem. Oportunidades que permanecem abertas são contabilizadas separadamente como desfecho desconhecido, sem receber rótulo de perda.
+O que a base mostra com força é outra coisa: **o prazo**. Nenhuma venda fechou depois de 138 dias, e é isso que o app transforma em ação. Os cortes reutilizam deals, então as linhas não são amostras independentes.
 
-`python scoring.py` reproduz as contagens e a tabela de avaliação. AUC mede a ordenação entre ganhos e perdas na parte observável da amostra; 0,5 indica ausência de discriminação nessa métrica.
+## Recomendações
 
-| Corte de 2017 | Elegíveis | Desfecho conhecido | Ainda abertos | AUC do score | AUC por preço |
-|---|---:|---:|---:|---:|---:|
-| 01/04 | 1.346 | 990 | 356 | 0,541 | 0,533 |
-| 01/05 | 1.622 | 1.142 | 480 | 0,512 | 0,520 |
-| 01/06 | 1.546 | 939 | 607 | 0,538 | 0,497 |
-| 01/07 | 1.706 | 983 | 723 | 0,487 | 0,495 |
+1. **Esta semana:** cada vendedor resolve os seus parados até sexta. Com data de decisão do cliente, o deal é requalificado. Sem data, vira Lost. Só assim o pipeline volta a significar alguma coisa.
+2. **Toda segunda:** executar o plano de 5 comandos. "Última chamada" = proposta final com prazo.
+3. **No CRM:**
+   - Tornar a conta obrigatória na criação do deal.
+   - Alertar quando um deal passar de 138 dias.
+   - Registrar atividades (último contato, reuniões). É o que falta para algum sinal separar ganho de perda.
 
-O score **não supera consistentemente a ordenação por preço** nesse diagnóstico. Sua proposta é explicitar uma política de acompanhamento que combina valor e idade, com uma fila separada para revisar status. O script também informa o tamanho do histórico, a AUC por idade e a interseção de IDs entre treino e teste — zero nos quatro cortes. Os mesmos negócios podem reaparecer em cortes diferentes; as quatro linhas não são amostras independentes.
+## Limitações
 
-Essa avaliação verifica o comportamento retrospectivo da regra. **Não demonstra aumento de vendas nem valida os pesos como política ótima.** Dados sem histórico de atividades e sem snapshots dos cadastros limitam o que pode ser reconstruído. O app apresenta o score como ferramenta de organização, sem transformá-lo em certeza sobre cada cliente.
-
-![Critérios de priorização e avaliação temporal](docs/como-funciona.png)
-
-### Validação realizada em 14/10/2026
-
-Passaram **20 testes automatizados** (16 de scoring e quatro de interface com AppTest), além das verificações Ruff e Black. O layout foi conferido em desktop (1440 × 1100) e celular (390 × 844), sem rolagem horizontal da página no celular. No navegador desktop, não houve erros de JavaScript; o filtro de Vicki mostrou 24 negociações, 80 revisões e nenhuma prospecção. O download real da fila gerou um CSV com 24 linhas, todas de Vicki, contendo prioridade, observação, critério e próximo passo. A [saída dos testes e do backtest](process-log/validacao.txt) está incluída. Essa validação confirma o funcionamento nos cenários testados; o impacto comercial ainda precisa ser medido em uso real.
-
-## Próximo uso recomendado
-
-Começar com uma carteira, revisar a situação dos itens sinalizados e registrar próximo contato, pendência e responsável. Para avaliar utilidade comercial, acompanhar ações concluídas, qualidade da atualização do CRM e resultados posteriores, comparando com a rotina anterior sob condições definidas. Para escalar, seriam necessários integração com o CRM, histórico de atividades, registro das decisões e validação dos critérios com o time comercial.
+- **Sem dados de atividade, nenhum atributo previu ganho.** O score organiza a agenda; ele não prevê receita deal a deal.
+- **"Parado = perda" é uma hipótese**, sustentada por 0 fechamentos após 138 dias em 6.711, mas não verificada nos próprios deals parados. Se parte deles tiver sido ganha sem registro, a chance histórica está subestimada.
+- **O limite de 138 dias pode ser artefato da base.** Os engajamentos começam em 20/10/2016, mas nenhum deal fechou antes de 01/03/2017, o que sugere dados sintéticos. Em um CRM real, o limite precisa ser recalculado.
+- **Prospecting usa a média histórica.** A base não mostra quantas prospecções viram negociação, então na prática essa fila é ordenada por valor.
+- **Para escalar:**
+  - Ler direto do CRM (API).
+  - Recalcular a curva toda noite.
+  - Mandar o plano por Slack ou e-mail às 8h de segunda.
+  - Medir se os deals trabalhados pelo plano fecham mais que os outros.
 
 ## Como usei IA
 
-O [process log](process-log/README.md) preserva a evolução e identifica quais conclusões anteriores foram revistas.
+Narrativa completa, com os erros de cada versão: [process-log/README.md](process-log/README.md). Saída dos testes e do backtest: [process-log/validacao.txt](process-log/validacao.txt).
 
-| Ferramenta | Uso no processo |
+| Ferramenta | Uso |
 |---|---|
-| Warp, agente Oz | v1 e v2: exploração, primeiro scoring e backtests, conforme narrativa original |
-| Claude | v3: revisão do modelo e da interface, conforme narrativa original |
-| Codex | v4: correção da fronteira temporal, substituição das perdas presumidas por revisão de situação e alinhamento entre código e apresentação |
-| SARAIVA · PNL e SARAIVA · Conversão BR | Revisão de linguagem: separar observação de interpretação e vincular benefício, prova e próxima ação |
+| Warp (agente Oz) | v1 e v2: EDA, primeiro scoring, primeiro backtest |
+| Claude | v3 e v5: diagnóstico dos deals parados, interface por papel, plano de segunda, testes e auditoria das outras versões |
+| Codex | v4: revisão crítica da v3. Corrigiu a fronteira do dia 138 e a sobreposição de treino e teste, separou os desfechos desconhecidos e cortou afirmações que excediam a evidência |
+| Doug (meu método de mentoria) | Critério de produto: verdade antes de comando, comando com prazo, elogio só quando merecido |
 
-O método Doug orientou a proposta inicial de diagnóstico e ação. A revisão preserva a ação concreta e troca consequências presumidas por perguntas e decisões sustentadas no CRM.
-
-## Evidências incluídas
-
-- [Código e dados](solution/), com comandos de execução e testes acima.
-- [Screenshots do app](docs/).
-- [Narrativa do processo](process-log/README.md), formato aceito pelo guia de submissão.
-- [Saída da validação automatizada](process-log/validacao.txt).
-
-A submissão está preparada para revisão por Pull Request. Este documento não registra um envio já realizado.
+| Versão | O que era | Por que mudou |
+|---|---|---|
+| v1 | Modelo com vendedor, produto, setor e conta | AUC 0,51: o modelo explicava ruído |
+| v2 | Valor esperado com curva só de fechados | A chance subia com a idade (viés de sobrevivência) e o score virou tabela de preço |
+| v3 | Parados como perda, prazo por deal, interface por papel | Afirmava a hipótese como fato, e o backtest tinha sobreposição de treino e teste no dia do corte |
+| v4 | Score fixo (60% valor, 40% idade) e nenhuma hipótese | Rigoroso, mas o plano mandava começar por um deal de $55 parado há 379 dias, e a interface voltou a ser uma tabela |
+| **v5** | O rigor da v4 com o diagnóstico e a interface da v3 | A hipótese é declarada como hipótese, e o plano prioriza valor e prazo |

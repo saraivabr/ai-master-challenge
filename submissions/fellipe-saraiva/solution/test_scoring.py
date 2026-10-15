@@ -1,4 +1,7 @@
-"""Testes de integridade temporal e das regras que sustentam a priorização."""
+"""Testes das regras de priorização e da integridade temporal do backtest.
+
+Execute: python -m unittest discover -s . -p 'test_*.py'
+"""
 import unittest
 
 import numpy as np
@@ -7,9 +10,8 @@ import pandas as pd
 import scoring as sc
 
 
-def deal(
-    identifier, stage="Engaging", age=40, price=100, close_date=None, account="Conta"
-):
+def deal(identifier, stage="Engaging", age=40, price=100, close_date=None, account="Conta",
+         agent="Vendedor"):
     return {
         "opportunity_id": identifier,
         "deal_stage": stage,
@@ -18,202 +20,174 @@ def deal(
         "sales_price": price,
         "account": account,
         "product": "Produto",
-        "sales_agent": "Vendedor",
+        "sector": "setor",
+        "sales_agent": agent,
         "manager": "Manager",
     }
 
 
 def frame(*rows):
-    return pd.DataFrame(rows).astype(
-        {"engage_date": "datetime64[ns]", "close_date": "datetime64[ns]"}
-    )
+    return pd.DataFrame(rows).astype({"engage_date": "datetime64[ns]", "close_date": "datetime64[ns]"})
 
 
-class ScoringTests(unittest.TestCase):
+class FitTests(unittest.TestCase):
     def setUp(self):
+        # ciclos: ganho em 138 dias, perda em 10 dias; um aberto há 300 dias (parado)
         self.history = frame(
-            deal("won", "Won", age=138, price=10, close_date="2017-12-31"),
-            deal("lost", "Lost", age=80, price=1000, close_date="2017-12-30"),
+            deal("won", "Won", age=138, close_date="2017-12-31"),
+            deal("lost", "Lost", age=20, close_date="2017-12-21"),
+            deal("old", age=300),
         )
-        self.model = sc.fit(self.history)
+        self.m = sc.fit(self.history)
 
-    def test_reference_boundary_keeps_138_in_negotiation_and_reviews_139(self):
-        source = frame(deal("at", age=138), deal("after", age=139))
-        scored = sc.score(source, self.model).set_index("opportunity_id")
-        self.assertEqual(scored.loc["at", "acao"], sc.ACT_NEGOTIATE)
-        self.assertEqual(scored.loc["after", "acao"], sc.ACT_REVIEW)
-        self.assertEqual(scored.loc["at", "deal_stage"], "Engaging")
-        self.assertEqual(scored.loc["after", "deal_stage"], "Engaging")
+    def test_cliff_is_longest_recorded_cycle(self):
+        self.assertEqual(self.m["cliff"], 138)
+        self.assertEqual(self.m["n_closed"], 2)
+        self.assertEqual(self.m["crm_rate"], 0.5)
 
-    def test_open_deals_never_become_inferred_losses(self):
-        source = frame(deal("old", age=500), deal("prospect", "Prospecting", age=None))
-        outcomes = sc.outcomes(source)
-        self.assertFalse(outcomes.known.any())
-        self.assertTrue(outcomes.won.isna().all())
-        scored = sc.score(source, self.model)
-        self.assertEqual(list(scored.deal_stage), list(source.deal_stage))
-        self.assertFalse(
-            {"prob", "valor_esperado", "days_left", "deadline"} & set(scored.columns)
-        )
+    def test_curve_counts_stale_as_loss_only_as_explicit_hypothesis(self):
+        # dia 0: 1 ganho entre 3 conhecidos (ganho, perda, parado) → 1/3, abaixo dos 50% do CRM
+        self.assertAlmostEqual(self.m["base"], 1 / 3)
+        self.assertLess(self.m["base"], self.m["crm_rate"])
+        self.assertEqual(self.m["n_stale"], 1)
 
-    def test_fit_uses_only_recorded_closed_outcomes_at_cut(self):
-        source = pd.concat(
-            [self.history, frame(deal("old", age=900))], ignore_index=True
-        )
-        model = sc.fit(source)
-        self.assertEqual(model["n_closed"], 2)
-        self.assertEqual(model["closed_win_rate"], 0.5)
-        self.assertEqual(model["reference_max_cycle"], 138)
-        before = sc.fit(source, "2017-12-30")
+    def test_fit_ignores_closes_after_cut(self):
+        before = sc.fit(self.history, "2017-12-30")
         self.assertEqual(before["n_closed"], 1)
-        self.assertEqual(before["closed_win_rate"], 0)
-        self.assertEqual(before["reference_max_cycle"], 79)
+        self.assertEqual(before["cliff"], 10)
 
-    def test_temporal_split_includes_day_of_close_only_in_train(self):
-        source = frame(
+    def test_no_history_is_supported(self):
+        m = sc.fit(frame(deal("open", age=40)))
+        self.assertIsNone(m["cliff"])
+        out = sc.score(frame(deal("open", age=40)), m)
+        self.assertEqual(len(out), 1)
+
+
+class ScoreTests(unittest.TestCase):
+    def setUp(self):
+        self.df = sc.load()
+        self.m = sc.fit(self.df)
+        self.prices = pd.read_csv(sc.DATA / "products.csv").sales_price
+        self.o = sc.score(self.df[self.df.deal_stage.isin(sc.OPEN)], self.m, prices=self.prices)
+
+    def test_boundary_day_138_is_alive_and_139_is_stale(self):
+        src = frame(deal("at", age=138, price=4821), deal("after", age=139, price=4821))
+        out = sc.score(src, self.m, prices=self.prices).set_index("opportunity_id")
+        self.assertNotEqual(out.loc["at", "acao"], sc.ACT_STALE)
+        self.assertEqual(out.loc["after", "acao"], sc.ACT_STALE)
+        self.assertEqual(out.loc["after", "valor_esperado"], 0)
+
+    def test_missing_engage_date_goes_to_cleanup(self):
+        out = sc.score(frame(deal("x", age=None)), self.m, prices=self.prices).iloc[0]
+        self.assertEqual(out.acao, sc.ACT_STALE)
+        self.assertIn("data de engajamento", out.comando)
+
+    def test_age_changes_order_not_only_price(self):
+        src = frame(deal("pro_old", age=125, price=4821), deal("basic_new", age=20, price=1096))
+        out = sc.score(src, self.m, prices=self.prices).set_index("opportunity_id")
+        self.assertGreater(out.loc["basic_new", "score"], out.loc["pro_old", "score"])
+
+    def test_filter_does_not_change_scores(self):
+        sub = self.df[self.df.deal_stage.isin(sc.OPEN) & self.df.sales_agent.eq("Vicki Laflamme")]
+        again = sc.score(sub, self.m, prices=self.prices)
+        pd.testing.assert_series_equal(self.o.loc[sub.index, "score"], again.score)
+
+    def test_real_dataset_partition(self):
+        self.assertEqual(len(self.o), 2089)
+        self.assertEqual(self.o.opportunity_id.nunique(), 2089)
+        self.assertTrue(self.o.score.between(0, 100).all())
+        counts = self.o.acao.value_counts()
+        self.assertEqual(counts[sc.ACT_STALE], 1291)
+        self.assertEqual(counts[sc.ACT_PROSPECT], 500)
+        self.assertEqual(self.o.acao.isin(sc.ALIVE).sum(), 298)
+        self.assertTrue(self.o[["verdade", "por_que", "comando"]].notna().all().all())
+
+    def test_invalid_prices_are_rejected(self):
+        with self.assertRaises(ValueError):
+            sc.score(frame(deal("bad", price=0)), self.m, prices=self.prices)
+
+    def test_empty_input(self):
+        empty = self.df.iloc[:0]
+        out = sc.score(empty, self.m, prices=self.prices)
+        self.assertTrue(out.empty)
+        self.assertTrue(sc.monday_plan(out).empty)
+        self.assertTrue(sc.team_audit(out).empty)
+
+
+class PlanTests(unittest.TestCase):
+    def setUp(self):
+        df = sc.load()
+        self.m = sc.fit(df)
+        prices = pd.read_csv(sc.DATA / "products.csv").sales_price
+        self.o = sc.score(df[df.deal_stage.isin(sc.OPEN)], self.m, prices=prices)
+
+    def test_plan_never_contains_stale_and_has_five_unique(self):
+        for agent, g in self.o.groupby("sales_agent"):
+            plan = sc.monday_plan(g)
+            self.assertFalse(plan.acao.eq(sc.ACT_STALE).any(), agent)
+            self.assertEqual(plan.opportunity_id.nunique(), len(plan), agent)
+            avail = g.acao.isin(sc.ALIVE + [sc.ACT_PROSPECT]).sum()
+            self.assertEqual(len(plan), min(5, avail), agent)
+
+    def test_plan_includes_most_valuable_last_call(self):
+        for agent, g in self.o.groupby("sales_agent"):
+            last = g[g.acao.eq(sc.ACT_LAST)]
+            if len(last) and g.acao.isin(sc.ALIVE).sum() >= 5:
+                plan = sc.monday_plan(g)
+                best = last.sort_values(["valor_esperado", "urgencia", "opportunity_id"],
+                                       ascending=[False, True, True]).iloc[0]
+                self.assertIn(best.opportunity_id, set(plan.opportunity_id), agent)
+
+    def test_plan_fills_with_prospects_when_no_alive(self):
+        g = self.o[self.o.sales_agent.eq("Darcel Schlecht")]
+        self.assertEqual(g.acao.isin(sc.ALIVE).sum(), 0)
+        plan = sc.monday_plan(g)
+        self.assertTrue(plan.acao.eq(sc.ACT_PROSPECT).all())
+        self.assertEqual(len(plan), 5)
+
+    def test_team_audit_totals(self):
+        t = sc.team_audit(self.o)
+        self.assertEqual(t.Abertos.sum(), len(self.o))
+        self.assertEqual(t.Parados.sum(), 1291)
+
+
+class BacktestTests(unittest.TestCase):
+    def test_close_on_cut_day_is_train_only(self):
+        src = frame(
             deal("on-cut", "Won", age=100, close_date="2017-12-01"),
             deal("later", "Lost", age=100, close_date="2017-12-02"),
-            deal("unresolved", age=200, account=None),
-            deal("not-yet-engaged", age=10),
+            deal("open", age=200, account=None),
+            deal("not-yet", age=10),
         )
-        train, test = sc.temporal_split(source, "2017-12-01")
+        train, test = sc.temporal_split(src, "2017-12-01")
         self.assertEqual(set(train.opportunity_id), {"on-cut"})
-        self.assertEqual(set(test.opportunity_id), {"later", "unresolved"})
-        self.assertFalse(set(train.opportunity_id) & set(test.opportunity_id))
+        self.assertEqual(set(test.opportunity_id), {"later", "open"})
 
-    def test_duplicate_ids_cannot_cross_train_test_boundary(self):
-        source = frame(
-            deal("same", "Won", age=100, close_date="2017-12-01"), deal("same", age=100)
-        )
+    def test_duplicate_ids_across_boundary_are_rejected(self):
+        src = frame(deal("same", "Won", age=100, close_date="2017-12-01"), deal("same", age=100))
         with self.assertRaises(AssertionError):
-            sc.temporal_split(source, "2017-12-01")
+            sc.temporal_split(src, "2017-12-01")
 
-    def test_backtest_counts_censored_and_keeps_missing_accounts(self):
-        source = frame(
+    def test_unresolved_are_counted_not_labeled(self):
+        src = frame(
             deal("train", "Won", age=100, price=10, close_date="2017-12-01"),
-            deal(
-                "won", "Won", age=80, price=1000, close_date="2017-12-02", account=None
-            ),
-            deal("lost", "Lost", age=90, close_date="2017-12-03"),
+            deal("won", "Won", age=80, price=1000, close_date="2017-12-02"),
+            deal("lost", "Lost", age=90, price=100, close_date="2017-12-03"),
             deal("open", age=200),
         )
-        row = sc.backtest(source, snapshots=["2017-12-01"]).iloc[0]
-        self.assertEqual(
-            (row.n_train, row.n_test, row.n_resolved, row.n_unresolved), (1, 3, 2, 1)
-        )
-        self.assertEqual(row.train_test_overlap, 0)
-        self.assertEqual(row.auc_price, 1)
+        row = sc.backtest(src, snapshots=["2017-12-01"]).iloc[0]
+        self.assertEqual((row.abertos_no_corte, row.com_desfecho, row.ainda_abertos), (3, 2, 1))
+        self.assertEqual(row["preço"], 1)
 
-    def test_score_is_monotonic_by_price_and_age(self):
-        source = frame(
-            deal("small", age=0, price=10),
-            deal("middle", age=0, price=100),
-            deal("large", age=0, price=1000),
-            deal("older", age=138, price=1000),
-        )
-        scored = sc.score(source, self.model)
-        self.assertTrue(scored.score.is_monotonic_increasing)
-        self.assertEqual(list(scored.score), [0, 30, 60, 100])
+    def test_real_backtest_is_consistent(self):
+        bt = sc.backtest(sc.load())
+        self.assertTrue((bt.abertos_no_corte == bt.com_desfecho + bt.ainda_abertos).all())
+        self.assertTrue(bt.score.between(0.4, 0.6).all())  # documentado: ≈ acaso
 
-    def test_prospect_score_depends_only_on_value(self):
-        source = frame(
-            deal("p1", "Prospecting", age=None, price=100),
-            deal("p2", "Prospecting", age=100, price=100),
-        )
-        scored = sc.score(source, self.model)
-        self.assertEqual(list(scored.score), [50, 50])
-        self.assertTrue(scored.acao.eq(sc.ACT_PROSPECT).all())
-
-    def test_filter_does_not_change_scores_or_relative_order(self):
-        source = frame(
-            deal("small", price=10),
-            deal("middle", price=100),
-            deal("large", price=1000),
-        )
-        scored = sc.score(source, self.model)
-        selected = source.sales_price.ge(100)
-        filtered = sc.score(source.loc[selected], self.model)
-        pd.testing.assert_series_equal(scored.loc[selected, "score"], filtered.score)
-        self.assertEqual(
-            list(sc.ranked(scored.loc[selected]).opportunity_id),
-            list(sc.ranked(filtered).opportunity_id),
-        )
-
-    def test_monday_plan_has_two_reviews_and_three_negotiations(self):
-        source = frame(
-            *(deal(f"r{i}", age=139 + i) for i in range(4)),
-            *(deal(f"n{i}", age=i, price=10 ** (i + 1)) for i in range(3)),
-            deal("p", "Prospecting", age=None, price=1000),
-        )
-        scored = sc.score(source, self.model)
-        plan = sc.monday_plan(scored)
-        self.assertEqual(list(plan.opportunity_id), ["r3", "r2", "n2", "n1", "n0"])
-        self.assertEqual(plan.opportunity_id.nunique(), 5)
-        complete = sc.monday_plan(scored, n=100)
-        self.assertEqual(set(complete.opportunity_id), set(scored.opportunity_id))
-        self.assertEqual(len(complete), len(scored))
-
-    def test_monday_plan_fills_short_queues_and_includes_missing_account(self):
-        source = frame(
-            deal("r", age=200, account=None),
-            deal("n", age=50),
-            deal("p", "Prospecting", age=None),
-        )
-        plan = sc.monday_plan(sc.score(source, self.model))
-        self.assertEqual(list(plan.opportunity_id), ["r", "n", "p"])
-        self.assertTrue(plan.iloc[0].comando.startswith(sc.NO_ACCOUNT_CMD))
-        self.assertNotIn("nenhum deal sem conta", plan.iloc[0].comando.lower())
-
-    def test_missing_engagement_date_requires_review(self):
-        scored = sc.score(frame(deal("missing", age=None)), self.model).iloc[0]
-        self.assertEqual(scored.acao, sc.ACT_REVIEW)
-        self.assertIn("Validar a data", scored.comando)
-
-    def test_no_history_and_empty_inputs_are_supported(self):
-        source = frame(deal("open", age=40))
-        model = sc.fit(source)
-        self.assertIsNone(model["reference_max_cycle"])
-        self.assertTrue(np.isnan(model["closed_win_rate"]))
-        self.assertEqual(sc.score(source, model).iloc[0].acao, sc.ACT_NEGOTIATE)
-        empty = source.iloc[:0]
-        scored = sc.score(empty, sc.fit(empty))
-        self.assertTrue(scored.empty)
-        self.assertTrue(sc.monday_plan(scored).empty)
-        self.assertTrue(sc.ranked(scored).empty)
-        self.assertTrue(sc.team_audit(scored).empty)
-        row = sc.backtest(empty, snapshots=["2017-12-01"]).iloc[0]
-        self.assertEqual(row.n_test, 0)
-        self.assertTrue(np.isnan(row.auc_score))
-
-    def test_auc_with_single_class_or_missing_score_is_explicitly_unavailable(self):
-        self.assertTrue(np.isnan(sc.auc([True], [20])))
-        self.assertTrue(np.isnan(sc.auc([True, False], [np.nan, 20])))
-        self.assertEqual(sc.auc([True, False], [20, 20]), 0.5)
-
-    def test_invalid_weights_and_prices_are_rejected(self):
-        with self.assertRaises(ValueError):
-            sc.fit(self.history, value_weight=0.8, age_weight=0.8)
-        with self.assertRaises(ValueError):
-            sc.score(frame(deal("invalid", price=0)), self.model)
-
-    def test_real_dataset_partition_and_plan_cover_each_salesperson(self):
-        df = sc.load()
-        model = sc.fit(df)
-        opened = df.loc[df.deal_stage.isin(sc.OPEN)]
-        scored = sc.score(opened, model)
-        self.assertEqual(len(scored), len(opened))
-        self.assertEqual(sc.team_audit(scored).Abertos.sum(), len(opened))
-        self.assertEqual(scored.opportunity_id.nunique(), len(opened))
-        self.assertTrue(scored.score.between(0, 100).all())
-        for _, group in scored.groupby("sales_agent"):
-            plan = sc.monday_plan(group)
-            self.assertEqual(len(plan), min(5, len(group)))
-            self.assertEqual(plan.opportunity_id.nunique(), len(plan))
-        diagnostic = sc.backtest(df)
-        self.assertTrue(diagnostic.train_test_overlap.eq(0).all())
-        self.assertTrue(
-            diagnostic.n_test.eq(diagnostic.n_resolved + diagnostic.n_unresolved).all()
-        )
+    def test_auc_edge_cases(self):
+        self.assertTrue(np.isnan(sc.auc([True], [1])))
+        self.assertTrue(np.isnan(sc.auc([True, False], [np.nan, 1])))
+        self.assertEqual(sc.auc([True, False], [2, 1]), 1.0)
 
 
 if __name__ == "__main__":
