@@ -58,5 +58,31 @@ class AppTests(unittest.TestCase):
         self.assertEqual(len(at.exception), 0)
         self.assertEqual(at.metric[0].value, f"{sub.acao.eq(sc.ACT_STALE).sum():,}")
 
+
+
+
+class UIRegressionTests(unittest.TestCase):
+    run_app = AppTests.run_app
+
+    def test_darcel_prospect_cards_keep_account_command_and_uncertainty(self):
+        at = self.run_app()
+        at.selectbox[0].select("Darcel Schlecht").run()
+        commands = [md.value for md in at.markdown if "class='cmd'" in md.value]
+        self.assertEqual(sum(sc.NO_ACCOUNT_CMD in cmd for cmd in commands), 4)
+        self.assertEqual(sum(m.label == "Conversão" and m.value == "Desconhecida" for m in at.metric), 5)
+        self.assertTrue(any("Proxy não validada" in c.value for c in at.caption))
+
+    def test_gtk_diagnosis_displays_scoped_rates_and_global_curve_label(self):
+        at = self.run_app()
+        at.radio[0].set_value("Gerente").run()
+        at.multiselect[0].set_value(["GTK 500"]).run()
+        text = " ".join(md.value for md in at.markdown)
+        self.assertIn("**60%**", text)
+        self.assertIn("**38%**", text)
+        self.assertIn("Referência global", text)
+        self.assertNotIn("**63%**", text)
+        self.assertEqual(at.metric[0].value, "14")
+
+
 if __name__ == "__main__":
     unittest.main()

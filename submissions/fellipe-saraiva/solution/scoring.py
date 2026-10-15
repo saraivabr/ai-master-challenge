@@ -1,12 +1,12 @@
 """Lead scoring do pipeline: o que fazer com cada deal, em que ordem e até quando.
 
 O que os dados mostram (python scoring.py reproduz tudo):
-1. Nenhuma das 6.711 vendas fechadas levou mais de 138 dias. 1.291 negociações abertas já passaram disso.
+1. Nenhuma das 6.711 negociações encerradas levou mais de 138 dias. 1.291 negociações abertas já passaram disso.
 2. Vendedor, produto, setor e conta não separam ganho de perda de forma estável fora da amostra (AUC ≈ 0,5).
-3. O score usa o que muda a decisão: valor do produto e quanto tempo o deal ainda tem.
+3. O score usa o que muda a decisão: valor do produto e sua idade em relação ao histórico.
 
 A chance por idade é uma HIPÓTESE explícita: deal aberto além do maior ciclo conta como perda
-não registrada. Ela é usada para ordenar e dar prazo, nunca como previsão de receita.
+não registrada. Ela é usada para ordenar e sugerir revisão, nunca como previsão de receita ou prazo fatal.
 """
 from pathlib import Path
 
@@ -18,8 +18,8 @@ TODAY = pd.Timestamp("2017-12-31")  # data de referência: último dia do datase
 OPEN = ["Engaging", "Prospecting"]
 HOT, WARM = 70, 45                  # cortes de score: "Atacar agora" / "Manter cadência"
 
-ACT_STALE = "Requalificar ou encerrar"
-ACT_LAST = "Última chamada"
+ACT_STALE = "Revisar e requalificar"
+ACT_LAST = "Revisão próxima"
 ACT_HOT = "Atacar agora"
 ACT_WARM = "Manter cadência"
 ACT_LOW = "Baixa prioridade"
@@ -44,13 +44,16 @@ def _closed_at(df, at):
     return df.close_date.notna() & df.close_date.le(at) & df.deal_stage.isin(["Won", "Lost"])
 
 
-def fit(df, at=TODAY):
+def fit(df, at=TODAY, stale_as_loss=True):
     """Aprende só com o que se sabia em `at`.
 
     - cliff: maior ciclo (engajamento → fechamento) entre os fechados até `at`.
     - curve[d]: dos deals que chegaram abertos ao dia d, quantos ganharam. HIPÓTESE: quem passou
       do cliff sem fechar conta como perda (nenhum fechamento da base aconteceu depois disso).
     - crm_rate: taxa de ganho só entre fechados (o que o CRM mostra).
+    A curva padrão também usa abertos antigos do próprio snapshot como pseudo-negativos,
+    inclusive IDs avaliados depois. Isso não usa seus desfechos futuros; não é treino
+    exclusivamente supervisionado/disjunto. stale_as_loss=False desliga essa hipótese.
     """
     at = pd.Timestamp(at)
     closed = df.loc[_closed_at(df, at)]
@@ -68,7 +71,7 @@ def fit(df, at=TODAY):
     is_closed = _closed_at(eng, at)
     age = (at - eng.engage_date).dt.days
     stale = ~is_closed & age.gt(m["cliff"])
-    known = is_closed | stale
+    known = is_closed | (stale & stale_as_loss)
     life = np.where(is_closed, (eng.close_date - eng.engage_date).dt.days, age)[known.values]
     won = (is_closed & eng.deal_stage.eq("Won"))[known].values
     curve = pd.Series({d: won[life >= d].mean() if (life >= d).any() else 0.0
@@ -80,8 +83,8 @@ def fit(df, at=TODAY):
     return m
 
 
-def score(deals, m, today=TODAY, prices=None):
-    """Score 0–100 = escala log do valor esperado (chance histórica por idade × preço de catálogo).
+def score(deals, m, today=TODAY, prices=None, review_old=True):
+    """Score 0–100 = escala log do valor sob hipótese (taxa por idade × preço de catálogo).
 
     `prices` deve ser o catálogo inteiro (limites fixos: o score não muda quando a tela filtra).
     """
@@ -99,7 +102,7 @@ def score(deals, m, today=TODAY, prices=None):
     engaging = d.deal_stage.eq("Engaging")
     prospect = d.deal_stage.eq("Prospecting")
     no_date = engaging & d.engage_date.isna()
-    stale = (engaging & d.age_days.gt(cliff)) if cliff is not None else pd.Series(False, index=d.index)
+    stale = (engaging & d.age_days.gt(cliff)) if cliff is not None and review_old else pd.Series(False, index=d.index)
     stale = stale | no_date
     alive = engaging & ~stale
 
@@ -108,80 +111,88 @@ def score(deals, m, today=TODAY, prices=None):
     else:
         d["prob"] = m["base"]
         d.loc[alive, "prob"] = d.loc[alive, "age_days"].clip(0, cliff).astype(int).map(m["curve"])
+        if not review_old:
+            # Sensibilidade: fora do suporte histórico, usar a média como proxy explícita.
+            d.loc[alive & d.age_days.gt(cliff), "prob"] = m["base"]
         d.loc[stale, "prob"] = 0.0
     d["valor_esperado"] = (d.prob * d.sales_price).round().astype(int)
 
     top = float(m["curve"].max()) if cliff is not None else 1.0
-    lo, hi = np.log(0.05 * prices.min()), np.log(top * prices.max())
-    lev = np.log(d.valor_esperado.clip(lower=1).astype(float))
-    d["score"] = ((lev - lo) / (hi - lo) * 100).clip(0, 100).round().astype(int) if hi > lo else 100
+    if top <= 0:
+        d["score"] = 0  # nenhuma vitória observada: zero evidência, nunca ACT_HOT
+    else:
+        lo, hi = np.log(0.05 * prices.min()), np.log(top * prices.max())
+        lev = np.log(d.valor_esperado.clip(lower=1).astype(float))
+        d["score"] = ((lev - lo) / (hi - lo) * 100).clip(0, 100).round().astype(int) if hi > lo else 100
+        d.loc[d.valor_esperado.eq(0), "score"] = 0
 
     last = alive & d.age_days.ge(m["last_call"]) if m.get("last_call") is not None else alive & False
     d["acao"] = np.select([stale, prospect, last, d.score >= HOT, d.score >= WARM],
                           [ACT_STALE, ACT_PROSPECT, ACT_LAST, ACT_HOT, ACT_WARM], ACT_LOW)
-    d["urgencia"] = np.where(alive, d.days_left, 10_000)  # desempate: quem vence antes vem antes
+    d["urgencia"] = np.where(alive, d.days_left, 10_000)  # desempate: menor distância à referência histórica vem antes
     cols = ["verdade", "por_que", "comando"]
     d[cols] = pd.DataFrame([_why(r, m) for r in d.itertuples()], index=d.index, columns=cols)
     return d
 
 
 def _why(r, m):
-    """Verdade (fato) → Por que importa → Comando (ação com prazo)."""
+    """Fato observado → hipótese/limitação → próximo passo com decisão humana."""
     v = f"{r.product} (${r.sales_price:,.0f})"
     cliff = m["cliff"]
-    if cliff is None and r.acao in ALIVE:  # sem histórico de fechamentos
+    if cliff is None and r.acao in ALIVE:
         t = (v, "Sem histórico de fechamentos: só o valor ordena.",
              "Confirmar o próximo passo com o cliente esta semana.")
     elif r.acao == ACT_STALE and pd.isna(r.age_days):
         t = (v + ", Engaging sem data de engajamento",
-             "Sem a data não dá para saber se o deal ainda está no prazo.",
+             "Sem a data não dá para comparar a idade com o histórico.",
              "Hoje: preencher a data de engajamento e confirmar o status com o cliente.")
     elif r.acao == ACT_STALE:
         t = (v + f", aberto há {r.age_days:.0f} dias",
-             f"Mais velho que qualquer venda já fechada ({cliff} dias; nenhuma das {m['n_closed']:,} "
-             "fechadas passou disso). Ou morreu e o CRM não sabe, ou precisa de data nova.",
-             "Até sexta: 1 ligação. Cliente deu data de decisão: requalificar. Não deu: marcar Lost.")
+             f"Acima do maior ciclo observado ({cliff} dias em {m['n_closed']:,} negociações encerradas). "
+             "Isso pede revisão; não comprova perda.",
+             "Até sexta: confirmar interesse e próximo passo com o cliente. Requalificar ou encerrar "
+             "apenas após avaliação humana e registro do motivo.")
     elif r.acao == ACT_PROSPECT:
         t = (v + ", ainda sem engajamento",
-             "Fila ordenada por valor. A base não mostra quantas prospecções viram negociação.",
+             "Conversão de prospecção desconhecida. O valor sob hipótese usa a média dos engajados "
+             "como proxy não validada; esta fila é ordenada por preço.",
              "Primeiro contato esta semana, começando pelos de maior valor.")
     elif r.acao == ACT_LAST:
-        t = (v + f", {r.age_days:.0f} dias, chance histórica {r.prob:.0%}",
-             f"Faltam {r.days_left:.0f} dias para passar dos {cliff} dias ({r.deadline:%d/%m}). "
-             f"A partir do dia {m['last_call']}, menos da metade da média dos deals ganhou.",
-             f"Proposta final com resposta até {r.deadline:%d/%m}. Sem resposta: Lost, e a agenda vai para os vivos.")
+        t = (v + f", {r.age_days:.0f} dias, taxa sob hipótese {r.prob:.0%}",
+             f"Referência histórica de {cliff} dias em {r.deadline:%d/%m}. A curva cai abaixo da metade "
+             "da média sob a hipótese de abertos antigos como perdas; não é prazo fatal.",
+             "Esta semana: revisar interesse e combinar próximo passo. Sem resposta, reavaliar "
+             "cadência com o responsável; idade sozinha não determina encerramento.")
     elif r.acao in (ACT_HOT, ACT_WARM) and r.age_days <= m["loss_median"]:
         t = (v + f", {r.age_days:.0f} dias em negociação",
-             f"Metade das perdas registradas na base acontece até o dia {m['loss_median']}. Este deal está nessa janela.",
+             f"Metade das perdas registradas acontece até o dia {m['loss_median']}. "
+             "Isso não determina o desfecho deste deal.",
              "Marcar a próxima conversa em até 48h.")
-    elif r.acao == ACT_HOT:
-        t = (v + f", {r.age_days:.0f} dias, chance histórica {r.prob:.0%}",
-             f"Entre os de maior valor esperado (${r.valor_esperado:,.0f}). "
-             f"Faltam {r.days_left:.0f} dias para passar dos {cliff}.",
-             f"Levar para proposta esta semana. Prazo final: {r.deadline:%d/%m}.")
-    elif r.acao == ACT_WARM:
-        t = (v + f", {r.age_days:.0f} dias, chance histórica {r.prob:.0%}",
-             f"Vivo, ${r.valor_esperado:,.0f} esperados: menos que os de cima. Faltam {r.days_left:.0f} dias.",
-             f"1 contato a cada 7 dias até {r.deadline:%d/%m}, sem tirar tempo dos prioritários.")
+    elif r.acao in (ACT_HOT, ACT_WARM):
+        t = (v + f", {r.age_days:.0f} dias, taxa sob hipótese {r.prob:.0%}",
+             f"Valor sob hipótese de ${r.valor_esperado:,.0f}; referência histórica em {r.deadline:%d/%m}. "
+             "Não é previsão de receita nem probabilidade calibrada.",
+             "Confirmar próximo passo esta semana e revisar a prioridade com o cliente.")
     else:
         t = (v + (f", {r.age_days:.0f} dias" if pd.notna(r.age_days) else ""),
-             f"Teto de ${r.sales_price:,.0f}. O tempo gasto aqui custa mais que o deal.",
-             "Só depois de zerar os de cima. Avaliar oferta de um produto maior.")
-    if pd.isna(r.account) and r.acao != ACT_STALE:
+             f"Preço de catálogo ${r.sales_price:,.0f}; menor prioridade pela regra atual. "
+             "Não há dados de custo do atendimento para concluir rentabilidade.",
+             "Após os prioritários, revisar interesse e adequação do produto com o cliente.")
+    if pd.isna(r.account):
         t = (t[0] + "; conta não preenchida", t[1], NO_ACCOUNT_CMD + t[2])
     return t
 
 
 def ranked(d):
-    """Ordem de trabalho: score, depois quem vence antes, depois valor esperado e ID (estável)."""
+    """Ordem de trabalho: score, depois menor distância à referência histórica, depois valor esperado e ID (estável)."""
     return d.sort_values(["score", "urgencia", "valor_esperado", "opportunity_id"],
                          ascending=[False, True, False, True], kind="stable")
 
 
 def monday_plan(d, n=5):
-    """Plano de segunda: n deals vivos por valor esperado; a Última chamada mais valiosa sempre entra.
+    """Plano de segunda: n deals vivos por valor esperado; a Revisão próxima mais valiosa sempre entra.
 
-    Deals parados nunca entram no top n: viram uma tarefa de limpeza separada. Se faltar deal vivo,
+    Deals parados nunca entram no top n: viram uma tarefa de revisão separada. Se faltar deal vivo,
     completa com primeiro contato nas prospecções de maior valor.
     """
     if n <= 0 or d.empty:
@@ -189,7 +200,7 @@ def monday_plan(d, n=5):
     alive = d[d.acao.isin(ALIVE)].sort_values(["valor_esperado", "urgencia", "opportunity_id"],
                                              ascending=[False, True, True], kind="stable")
     plan = alive.head(n)
-    last = alive[alive.acao.eq(ACT_LAST) & alive.days_left.gt(0)]  # quem vence hoje não tem semana
+    last = alive[alive.acao.eq(ACT_LAST) & alive.days_left.gt(0)]  # referência já atingida hoje
     if len(last) and not plan.acao.eq(ACT_LAST).any() and len(plan) == n:
         plan = pd.concat([plan.iloc[: n - 1], last.head(1)])
     if len(plan) < n:
@@ -198,23 +209,34 @@ def monday_plan(d, n=5):
 
 
 def exposure(d):
-    """Quanto do valor nominal aberto está em deals mais velhos que qualquer venda já fechada."""
+    """Quanto do valor nominal aberto está em deals mais velhos que qualquer negociação já encerrada."""
     stale = d.acao.eq(ACT_STALE)
     total = float(d.sales_price.sum())
     return {"n_stale": int(stale.sum()), "stale_value": float(d.loc[stale, "sales_price"].sum()),
             "open_value": total}
 
 
+def diagnosis_rates(history, open_deals, at=TODAY):
+    """Taxas com o mesmo recorte das contagens; referência de idade permanece global."""
+    closed = history.loc[_closed_at(history, at)]
+    n, wins = len(closed), int(closed.deal_stage.eq("Won").sum())
+    # Sem data pede revisão, mas não é evidência de idade acima do máximo.
+    stale = int((open_deals.acao.eq(ACT_STALE) & open_deals.age_days.notna()).sum())
+    return {"n_closed": n, "n_stale": stale,
+            "crm_rate": wins / n if n else np.nan,
+            "assumed_rate": wins / (n + stale) if n else np.nan}
+
+
 def team_audit(d):
     """Visão do manager: quanto do pipeline de cada vendedor está parado."""
     if d.empty:
-        return pd.DataFrame(columns=["manager", "sales_agent", "Abertos", "Vivos", "Última chamada",
+        return pd.DataFrame(columns=["manager", "sales_agent", "Abertos", "Vivos", "Revisão próxima",
                                      "Parados", "Sem conta", "% parado", "Valor parado"])
     g = d.groupby(["manager", "sales_agent"], dropna=False)
     out = pd.DataFrame({
         "Abertos": g.size(),
         "Vivos": g.acao.apply(lambda s: int(s.isin(ALIVE).sum())),
-        "Última chamada": g.acao.apply(lambda s: int(s.eq(ACT_LAST).sum())),
+        "Revisão próxima": g.acao.apply(lambda s: int(s.eq(ACT_LAST).sum())),
         "Parados": g.acao.apply(lambda s: int(s.eq(ACT_STALE).sum())),
         "Sem conta": g.account.apply(lambda s: int(s.isna().sum())),
         "Valor parado": g.apply(lambda x: int(x.loc[x.acao.eq(ACT_STALE), "sales_price"].sum()),
@@ -237,7 +259,9 @@ def auc(y, s):
 
 
 def temporal_split(df, at):
-    """Treino: fechados até o corte (inclusive). Teste: engajados até o corte e abertos ao fim do dia."""
+    """Histórico rotulado: fechados até o corte. Avaliação: engajados e ainda abertos.
+
+    fit(df, at) também usa abertos antigos como pseudo-negativos; estes não estão em train."""
     at = pd.Timestamp(at)
     train = df.loc[_closed_at(df, at)].copy()
     test = df.loc[df.engage_date.notna() & df.engage_date.le(at)
@@ -264,7 +288,7 @@ def backtest(df, snapshots=("2017-04-01", "2017-05-01", "2017-06-01", "2017-07-0
         t = test[resolved]
         y = t.deal_stage.eq("Won").values
         if len(test) and m["cliff"] is not None:
-            s = score(t.assign(deal_stage="Engaging"), m, today=snap,
+            s = score(t.assign(deal_stage="Engaging", close_date=pd.NaT, close_value=np.nan), m, today=snap,
                       prices=df.sales_price.dropna())
             row["score"] = auc(y, s.score)
             row["idade"] = auc(y, s.prob)
@@ -288,7 +312,7 @@ if __name__ == "__main__":  # python scoring.py
     assert len(o) == 2089 and o.score.between(0, 100).all()
     stale = o[o.acao == ACT_STALE]
     assert (stale.age_days > m["cliff"]).all() and (stale.valor_esperado == 0).all()
-    assert not o[o.age_days.eq(m["cliff"])].acao.eq(ACT_STALE).any(), "dia 138 ainda está no prazo"
+    assert not o[o.age_days.eq(m["cliff"])].acao.eq(ACT_STALE).any(), "dia 138 ainda está no suporte histórico"
     for _, g in o.groupby("sales_agent"):
         assert not monday_plan(g).acao.eq(ACT_STALE).any()
     assert team_audit(o).Abertos.sum() == len(o)
@@ -297,7 +321,7 @@ if __name__ == "__main__":  # python scoring.py
           f"Abertos além disso: {ex['n_stale']:,} (${ex['stale_value']:,.0f} de ${ex['open_value']:,.0f}, "
           f"{ex['stale_value'] / ex['open_value']:.0%}).")
     print(f"Taxa de ganho entre fechados: {m['crm_rate']:.1%}. Contando os parados como perda "
-          f"(hipótese): {m['base']:.1%}. Última chamada a partir do dia {m['last_call']}.\n")
+          f"(hipótese): {m['base']:.1%}. Revisão próxima a partir do dia {m['last_call']}.\n")
     print(o.acao.value_counts().to_string(), "\n")
     print(backtest(df).to_string(index=False))
     print("\nOK")

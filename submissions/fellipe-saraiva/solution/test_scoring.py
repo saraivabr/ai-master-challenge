@@ -190,5 +190,47 @@ class BacktestTests(unittest.TestCase):
         self.assertEqual(sc.auc([True, False], [2, 1]), 1.0)
 
 
+
+
+
+class RegressionTests(unittest.TestCase):
+    def test_no_wins_has_zero_score_not_hot(self):
+        history = frame(deal("loss", "Lost", age=30, close_date="2017-12-31"))
+        m = sc.fit(history)
+        with np.errstate(divide="raise", invalid="raise"):
+            out = sc.score(frame(deal("open", age=10), deal("prospect", "Prospecting", age=None)), m)
+        self.assertTrue(out.valor_esperado.eq(0).all())
+        self.assertTrue(out.score.eq(0).all())
+        self.assertFalse(out.acao.eq(sc.ACT_HOT).any())
+
+    def test_scoped_rates_use_filtered_closed_and_open(self):
+        df = sc.load()
+        all_open = sc.score(df[df.deal_stage.isin(sc.OPEN)], sc.fit(df))
+        for filters in ({"product": "GTK 500"}, {"regional_office": "Central"},
+                        {"manager": "Dustin Brinkmann"},
+                        {"regional_office": "West", "product": "GTX Pro"}):
+            history, opened = df, all_open
+            for key, value in filters.items():
+                history, opened = history[history[key].eq(value)], opened[opened[key].eq(value)]
+            rates = sc.diagnosis_rates(history, opened)
+            closed = history[history.deal_stage.isin(["Won", "Lost"])]
+            wins = closed.deal_stage.eq("Won").sum()
+            self.assertAlmostEqual(rates["crm_rate"], wins / len(closed))
+            self.assertAlmostEqual(rates["assumed_rate"], wins / (len(closed) + rates["n_stale"]))
+        gtk = sc.diagnosis_rates(df[df["product"].eq("GTK 500")],
+                                 all_open[all_open["product"].eq("GTK 500")])
+        self.assertEqual(gtk["n_stale"], 14)
+        self.assertEqual(f"{gtk['crm_rate']:.0%} → {gtk['assumed_rate']:.0%}", "60% → 38%")
+        self.assertTrue(np.isnan(sc.diagnosis_rates(df.iloc[:0], all_open.iloc[:0])["crm_rate"]))
+
+    def test_recommendations_do_not_infer_loss_or_cost_from_age(self):
+        df = sc.load()
+        opened = sc.score(df[df.deal_stage.isin(sc.OPEN)], sc.fit(df))
+        text = " ".join(opened.comando) + " ".join(opened.por_que)
+        for unsupported in ("marcar Lost", "Sem resposta: Lost", "custa mais que", "Prazo final"):
+            self.assertNotIn(unsupported, text)
+        self.assertTrue(opened[opened.account.isna()].comando.str.startswith(sc.NO_ACCOUNT_CMD).all())
+
+
 if __name__ == "__main__":
     unittest.main()
