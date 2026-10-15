@@ -30,7 +30,7 @@ python evaluation.py                               # top 5, baselines e sensibil
 streamlit run app.py                                   # http://localhost:8501
 ```
 
-Os quatro CSVs do [dataset do Kaggle](https://www.kaggle.com/datasets/agungpambudi/crm-sales-predictive-analytics) estão em `solution/data/`. Eles foram baixados de um espelho no GitHub, porque o Kaggle exige login. As contagens batem com o brief, mas a URL do espelho não foi guardada. O app usa uma **data de referência fixa, 31/12/2017** (último dia da base), e não a data de hoje.
+Os quatro CSVs do [dataset do Kaggle](https://www.kaggle.com/datasets/agungpambudi/crm-sales-predictive-analytics) estão em `solution/data/`. Eles foram baixados de um espelho no GitHub, porque o Kaggle exige login. As contagens batem com o brief, mas a URL do espelho não foi guardada. Por isso os arquivos estão fixados por hash em `solution/data/SHA256SUMS`: `shasum -a 256 -c SHA256SUMS` confere, e um teste falha se algum CSV mudar. O app usa uma **data de referência fixa, 31/12/2017** (último dia da base), e não a data de hoje.
 
 ## O que cada pessoa vê
 

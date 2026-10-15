@@ -2,6 +2,7 @@
 
 Execute: python -m unittest discover -s . -p 'test_*.py'
 """
+import hashlib
 import unittest
 
 import numpy as np
@@ -230,6 +231,14 @@ class RegressionTests(unittest.TestCase):
         for unsupported in ("marcar Lost", "Sem resposta: Lost", "custa mais que", "Prazo final"):
             self.assertNotIn(unsupported, text)
         self.assertTrue(opened[opened.account.isna()].comando.str.startswith(sc.NO_ACCOUNT_CMD).all())
+
+
+class DataTests(unittest.TestCase):
+    def test_csvs_match_recorded_hashes(self):
+        """Os CSVs são exatamente os que geraram os números do README (data/SHA256SUMS)."""
+        for line in (sc.DATA / "SHA256SUMS").read_text().splitlines():
+            digest, name = line.split(maxsplit=1)
+            self.assertEqual(hashlib.sha256((sc.DATA / name).read_bytes()).hexdigest(), digest, name)
 
 
 if __name__ == "__main__":
