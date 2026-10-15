@@ -12,7 +12,9 @@ Construí um app Streamlit que o vendedor abre na segunda e recebe **5 comandos 
 
 Também testei o que prevê ganho. Nem vendedor, nem produto, nem setor, nem conta, nem o próprio score separam ganho de perda de forma estável (AUC ≈ 0,5). A idade oscila e muda de direção entre cortes. Por isso o app não promete adivinhar quem compra. Ele organiza a semana: **revisar os antigos e ordenar os próximos contatos com critérios explícitos.**
 
-**A comparação do top 5 não demonstrou vantagem sobre maior preço.** Em quatro cortes, com 90 dias de acompanhamento, o plano teve $3.025,44 de receita observada por vaga contra $3.194,79 do maior preço (−5,3%) e $903,28 da maior idade. São resultados retrospectivos, com desconhecidos e seleções repetidas entre cortes; não são ganho causal. [Protocolo, cobertura e sensibilidade](docs/avaliacao.md).
+**A comparação do top 5 não demonstrou vantagem sobre maior preço.** Em quatro cortes, com 90 dias de acompanhamento, o plano teve $3.025,43 de receita observada por vaga contra $3.194,79 do maior preço (−5,3%) e $903,28 da maior idade. São resultados retrospectivos, com desconhecidos e seleções repetidas entre cortes; não são ganho causal. [Protocolo, cobertura e sensibilidade](docs/avaliacao.md).
+
+**Como as peças se encaixam:** [docs/ontologia.md](docs/ontologia.md) define cada conceito (parado, referência histórica, taxa sob hipótese, ação), separa o que é dado, derivado, hipótese e decisão, e aponta onde cada um mora no código.
 
 ![Visão do vendedor v6](docs/v6-vendedor.png)
 
@@ -24,7 +26,7 @@ Requer Python 3.11 ou superior.
 cd submissions/fellipe-saraiva/solution
 python3 -m venv .venv && source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python -m unittest discover -s . -p 'test_*.py'        # 33 testes
+python -m unittest discover -s . -p 'test_*.py'        # 34 testes
 python scoring.py                                  # diagnóstico e AUC
 python evaluation.py                               # top 5, baselines e sensibilidade
 streamlit run app.py                                   # http://localhost:8501

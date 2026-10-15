@@ -88,7 +88,7 @@ Pedi ao Claude para validar o que estava de pé. Ele rodou a v4 do zero: 20/20 t
 
 ## Evidências
 - Código, testes e dados: [`../solution/`](../solution/)
-- Saída dos testes e do backtest: [`validacao.txt`](validacao.txt)
+- Saída atual dos testes, do backtest e da avaliação: [`validacao-v6.txt`](validacao-v6.txt). Histórico da v5: [`validacao.txt`](validacao.txt).
 - Screenshots: [`../docs/`](../docs/)
 
 ---
@@ -108,10 +108,10 @@ Esta seção acrescenta a revisão autorizada por Fellipe (“ótimo, então faz
 
 **Teste novo, sem procurar um resultado favorável:** `evaluation.py` reconstrói quatro snapshots, apaga status/data/valor de fechamento futuros antes de selecionar, e compara `monday_plan` com maior preço e maior idade (proxy de tempo parado). São 5 vagas por vendedor e horizonte igual de 90 dias. Só depois da seleção são consultados os resultados observados. Desconhecidos ficam separados, e as três políticas compartilham pool e orçamento. Cenários adicionais retiram pseudo-perdas e admitem antigos novamente. Um teste troca os desfechos futuros e exige listas idênticas.
 
-**Resultado que contraria a proposta:** o top5 padrão tem $3.025,44 de receita observada por vaga, contra $3.194,79 do preço (−5,3%) e $903,28 da idade. Em ganhos observados são 282, 299 e 224, respectivamente, em 600 seleções. Preço também supera o top5 nos dois cenários de sensibilidade. O plano não foi retunado para ganhar o backtest. Permanece uma heurística de agenda, com a desvantagem documentada e necessidade de piloto prospectivo. A avaliação não valida a conversão de prospecção nem demonstra efeito causal.
+**Resultado que contraria a proposta:** o top5 padrão tem $3.025,43 de receita observada por vaga, contra $3.194,79 do preço (−5,3%) e $903,28 da idade. Em ganhos observados são 282, 299 e 224, respectivamente, em 600 seleções. Preço também supera o top5 nos dois cenários de sensibilidade. O plano não foi retunado para ganhar o backtest. Permanece uma heurística de agenda, com a desvantagem documentada e necessidade de piloto prospectivo. A avaliação não valida a conversão de prospecção nem demonstra efeito causal.
 
-**Verificação:** 33 testes distintos (23 existentes + 10 regressões/protocolo), dependências fixadas, aplicação real no navegador com Playwright e checagem dos casos Darcel/GTK 500. Comandos, versões e saídas reais em [`validacao-v6.txt`](validacao-v6.txt); protocolo e resultados em [`../docs/avaliacao.md`](../docs/avaliacao.md). Os screenshots anteriores e `validacao.txt` foram preservados como evidência da v5; imagens v6 têm nomes novos.
+**Verificação:** 33 testes distintos (23 existentes + 10 regressões/protocolo; um 34º, de hash dos CSVs, entrou no commit seguinte), dependências fixadas, aplicação real no navegador com Playwright e checagem dos casos Darcel/GTK 500. Comandos, versões e saídas reais em [`validacao-v6.txt`](validacao-v6.txt); protocolo e resultados em [`../docs/avaliacao.md`](../docs/avaliacao.md). Os screenshots anteriores e `validacao.txt` foram preservados como evidência da v5; imagens v6 têm nomes novos.
 
 **Decisões e limitações:** nenhum novo modelo ou tela. Os desfechos posteriores ao corte entram somente como resultado retrospectivo; atributos de catálogo/equipe são assumidos estáticos porque não há versões históricas. A idade não é tempo desde último contato. Seleções se repetem entre cortes, não representando receita única. A primeira captura de Darcel pegou um recálculo pendente do Streamlit; ela foi descartada e refeita após conferir o snapshot renderizado.
 
-Na conferência visual, os textos “Desconhecida” e “Esta semana” ficaram truncados na largura original dos cartões. A fonte das métricas foi reduzida de 1,9rem para 1,4rem e a UI foi conferida novamente; a suíte final continuou com 33/33 testes.
+Na conferência visual, os textos “Desconhecida” e “Esta semana” ficaram truncados na largura original dos cartões. A fonte das métricas foi reduzida de 1,9rem para 1,4rem e a UI foi conferida novamente; a suíte final continuou com 33/33 testes (34/34 depois do teste de hash).

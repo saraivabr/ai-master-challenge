@@ -1,18 +1,13 @@
 Validação v6
 Python 3.13.7 / Darwin arm64
 pandas 2.3.3; numpy 2.3.3; streamlit 1.50.0
-Head inicial: 8911879bf29e27a60fbdb3d57710e820050ec844
+Base: d86a2d2 (inclui o teste de hash dos CSVs)
 CWD: submissions/fellipe-saraiva/solution
 
 $ python -m unittest discover -s . -p test_*.py
-2026-10-14 23:41:00.887 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
-.2026-10-14 23:41:01.757 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
-.2026-10-14 23:41:02.476 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
-.2026-10-14 23:41:02.587 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
-.2026-10-14 23:41:02.636 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
-.............................
+..............................
 ----------------------------------------------------------------------
-Ran 33 tests in 4.651s
+Ran 34 tests in 8.455s
 
 OK
 Exit: 0
@@ -27,7 +22,7 @@ Fazer 1º contato           500
 Revisão próxima            154
 Atacar agora                57
 Manter cadência             56
-Baixa prioridade            31
+Baixa prioridade            31 
 
      corte  abertos_no_corte  com_desfecho  ainda_abertos  score  idade  preço  vendedor  produto  setor  conta
 2017-04-01              1346           990            356  0.533  0.472  0.533     0.495    0.448  0.480  0.469
@@ -92,7 +87,12 @@ Detalhe por corte:
 2017-07-01 antigos_elegiveis maior_idade        1706       1706          30                 0           150          65             85      39      0.433                  0.600            0.260            75335.0           502.233
 Exit: 0
 
+$ shasum -a 256 -c data/SHA256SUMS
+accounts.csv: OK
+products.csv: OK
+sales_pipeline.csv: OK
+sales_teams.csv: OK
+
 UI real: streamlit run app.py --server.headless true --server.address 127.0.0.1 --server.port 8519 --browser.gatherUsageStats false
 Playwright CLI: vendedor Kary; Darcel (4/5 cartões com comando de conta, conversão desconhecida); gerente GTK 500 (14 antigos, 60% → 38%).
 Console: nenhum erro JavaScript; avisos do renderer Vega-Lite (versão de spec e extent transitório), gráfico preenchido após renderização. AppTest também cobriu todos os 27 vendedores do snapshot final, cascata de filtros e filtro vazio.
-Registro local exigido por AGENTS.md: python3 ~/Saraiva.AI/_ecosystem/registry/validar.py — exit 0, nenhum erro. Catálogo não alterado.
