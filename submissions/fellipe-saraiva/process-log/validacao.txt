@@ -1,0 +1,53 @@
+test_empty_filter_is_explained_and_recovers (test_app.AppTests.test_empty_filter_is_explained_and_recovers) ... 2026-10-14 22:21:46.200 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+ok
+test_initial_totals_and_disclosed_limit (test_app.AppTests.test_initial_totals_and_disclosed_limit) ... 2026-10-14 22:21:46.440 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+ok
+test_region_and_manager_filters_cascade (test_app.AppTests.test_region_and_manager_filters_cascade) ... 2026-10-14 22:21:46.469 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+ok
+test_seller_filters_rows_and_plan_without_changing_scores (test_app.AppTests.test_seller_filters_rows_and_plan_without_changing_scores) ... 2026-10-14 22:21:46.532 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+ok
+test_auc_with_single_class_or_missing_score_is_explicitly_unavailable (test_scoring.ScoringTests.test_auc_with_single_class_or_missing_score_is_explicitly_unavailable) ... ok
+test_backtest_counts_censored_and_keeps_missing_accounts (test_scoring.ScoringTests.test_backtest_counts_censored_and_keeps_missing_accounts) ... ok
+test_duplicate_ids_cannot_cross_train_test_boundary (test_scoring.ScoringTests.test_duplicate_ids_cannot_cross_train_test_boundary) ... ok
+test_filter_does_not_change_scores_or_relative_order (test_scoring.ScoringTests.test_filter_does_not_change_scores_or_relative_order) ... ok
+test_fit_uses_only_recorded_closed_outcomes_at_cut (test_scoring.ScoringTests.test_fit_uses_only_recorded_closed_outcomes_at_cut) ... ok
+test_invalid_weights_and_prices_are_rejected (test_scoring.ScoringTests.test_invalid_weights_and_prices_are_rejected) ... ok
+test_missing_engagement_date_requires_review (test_scoring.ScoringTests.test_missing_engagement_date_requires_review) ... ok
+test_monday_plan_fills_short_queues_and_includes_missing_account (test_scoring.ScoringTests.test_monday_plan_fills_short_queues_and_includes_missing_account) ... ok
+test_monday_plan_has_two_reviews_and_three_negotiations (test_scoring.ScoringTests.test_monday_plan_has_two_reviews_and_three_negotiations) ... ok
+test_no_history_and_empty_inputs_are_supported (test_scoring.ScoringTests.test_no_history_and_empty_inputs_are_supported) ... ok
+test_open_deals_never_become_inferred_losses (test_scoring.ScoringTests.test_open_deals_never_become_inferred_losses) ... ok
+test_prospect_score_depends_only_on_value (test_scoring.ScoringTests.test_prospect_score_depends_only_on_value) ... ok
+test_real_dataset_partition_and_plan_cover_each_salesperson (test_scoring.ScoringTests.test_real_dataset_partition_and_plan_cover_each_salesperson) ... ok
+test_reference_boundary_keeps_138_in_negotiation_and_reviews_139 (test_scoring.ScoringTests.test_reference_boundary_keeps_138_in_negotiation_and_reviews_139) ... ok
+test_score_is_monotonic_by_price_and_age (test_scoring.ScoringTests.test_score_is_monotonic_by_price_and_age) ... ok
+test_temporal_split_includes_day_of_close_only_in_train (test_scoring.ScoringTests.test_temporal_split_includes_day_of_close_only_in_train) ... ok
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.605s
+
+OK
+Referência histórica: 138 dias; ganhos entre 6711 encerrados: 63.2%
+acao
+Revisar status        1291
+Fazer 1º contato       500
+Avançar negociação     298
+     corte  n_train  n_test  n_resolved  n_unresolved  train_test_overlap  auc_score  auc_price  auc_age
+2017-04-01      666    1346         990           356                   0      0.541      0.533    0.515
+2017-05-01     1253    1622        1142           480                   0      0.512      0.520    0.475
+2017-06-01     2055    1546         939           607                   0      0.538      0.497    0.575
+2017-07-01     2699    1706         983           723                   0      0.487      0.495    0.499
+OK — score de prioridade, sem probabilidades ou previsão de receita
+test_empty_filter_is_explained_and_recovers (test_app.AppTests.test_empty_filter_is_explained_and_recovers) ... 2026-10-14 22:25:43.025 WARNING streamlit.runtime.scriptrunner_utils.script_run_context: Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+ok
+test_initial_totals_and_disclosed_limit (test_app.AppTests.test_initial_totals_and_disclosed_limit) ... 2026-10-14 22:25:43.265 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+ok
+test_region_and_manager_filters_cascade (test_app.AppTests.test_region_and_manager_filters_cascade) ... 2026-10-14 22:25:43.292 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+ok
+test_seller_filters_rows_and_plan_without_changing_scores (test_app.AppTests.test_seller_filters_rows_and_plan_without_changing_scores) ... 2026-10-14 22:25:43.353 Thread 'MainThread': missing ScriptRunContext! This warning can be ignored when running in bare mode.
+ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.409s
+
+OK
